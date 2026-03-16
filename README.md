@@ -137,7 +137,7 @@
 
   cloudflared tunnel create adsb
 
-  Note the tunnel ID printed — you'll need it in the next step.
+  Note the tunnel ID printed — you\'ll need it in the next step.
 
   Add a DNS record pointing your subdomain to the tunnel:
 
