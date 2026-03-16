@@ -27,30 +27,36 @@
   ```bash
   ls /run/dump1090-mutability/
   cat /run/dump1090-mutability/aircraft.json
+  ```
 
   You should see a JSON object with an aircraft array. Confirm dump1090-mutability is running:
 
-  ps aux | grep dump1090
+ `ps aux | grep dump1090`
 
   ---
   2. Install Node.js
 
+  ```bash
   curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
   sudo apt install -y nodejs
   node -v
+  ```
 
   ---
   3. Set up the server
 
+  ```bash
   sudo mkdir -p /opt/adsb-server
   cd /opt/adsb-server
   npm init -y
   npm install express ws
+  ```
 
   Create server.js:
 
-  nano /opt/adsb-server/server.js
+  `nano /opt/adsb-server/server.js`:
 
+  ```bash
   const express = require('express');
   const { WebSocketServer } = require('ws');
   const http = require('http');
@@ -91,16 +97,18 @@
   }, 25000);
 
   server.listen(PORT, () => console.log(`Listening on ${PORT}`));
+  ```
 
   Create a public/ directory and put your index.html inside it:
 
-  mkdir -p /opt/adsb-server/public
+  `mkdir -p /opt/adsb-server/public`
 
   ---
   4. Run the server as a systemd service
 
-  sudo nano /etc/systemd/system/adsb-server.service
+  `sudo nano /etc/systemd/system/adsb-server.service`:
 
+  ```bash
   [Unit]
   Description=ADS-B Web Server
   After=network.target
@@ -117,37 +125,41 @@
   sudo systemctl enable adsb-server
   sudo systemctl start adsb-server
   sudo systemctl status adsb-server
+  ```
 
   ---
   5. Install cloudflared
 
+  ```bash
   curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64 -o
    cloudflared
   sudo mv cloudflared /usr/local/bin/
   sudo chmod +x /usr/local/bin/cloudflared
+  ```
 
   ---
   6. Authenticate and create a tunnel
 
   Authenticate (run this, then open the printed URL in a browser on another device):
 
-  cloudflared tunnel login
+  `cloudflared tunnel login`
 
   Create the tunnel:
 
-  cloudflared tunnel create adsb
+  `cloudflared tunnel create adsb`
 
   Note the tunnel ID printed — you\'ll need it in the next step.
 
   Add a DNS record pointing your subdomain to the tunnel:
 
-  cloudflared tunnel route dns adsb flights.yourdomain.com
+  `cloudflared tunnel route dns adsb flights.yourdomain.com`
 
   ---
   7. Create the tunnel config file
 
   Use Python to write the config — avoids shell escaping issues that break the YAML:
 
+  ```bash
   python3 -c "
   with open('/home/pi/.cloudflared/config.yml', 'w') as f:
       f.write('tunnel: YOUR-TUNNEL-ID\n')
@@ -157,10 +169,11 @@
       f.write('    service: http://localhost:3000\n')
       f.write('  - service: http_status:404\n')
   "
+  ```
 
   Replace YOUR-TUNNEL-ID and flights.yourdomain.com with your actual values. Verify it looks right:
 
-  cat ~/.cloudflared/config.yml
+  `cat ~/.cloudflared/config.yml`
 
   Expected output:
   tunnel: YOUR-TUNNEL-ID
@@ -173,29 +186,33 @@
   ---
   8. Install cloudflared as a system service
 
+  ```bash
   sudo cp ~/.cloudflared/config.yml /etc/cloudflared/config.yml
   sudo cloudflared service install
   sudo systemctl enable cloudflared
   sudo systemctl start cloudflared
   sudo systemctl status cloudflared
+  ```
 
   ---
   9. Update index.html with your public URL
 
   In public/index.html, update the WebSocket connection and map center:
 
+  ```bash
   const ws = new WebSocket(`wss://flights.yourdomain.com`);
   const map = L.map('map').setView([YOUR_LAT, YOUR_LON], 9);
+  ```
 
   Then restart the server to pick up the change:
 
-  sudo systemctl restart adsb-server
+  `sudo systemctl restart adsb-server`
 
   ---
   Verify everything is running
 
-  sudo systemctl status adsb-server
-  sudo systemctl status cloudflared
+  `sudo systemctl status adsb-server`
+  `sudo systemctl status cloudflared`
 
   Both should show active (running). Visit your subdomain in a browser — you should see the map. Planes
    will appear as soon as any are in range of your antenna.
