@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+  <html>
+  <head>
+    <meta charset="utf-8">
+    <title>ADS-B Live Flight Tracker | Dan Glorioso</title>
+    <meta name="description" content="Real-time flight tracker powered by a Raspberry Pi ADS-B receiver, 
+    displaying live aircraft positions, altitude, speed, and flight data on an interactive map.">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <style>
+      body { margin: 0; background: #111; color: #fff; font-family: monospace; }
+      #map { width: 100vw; height: 100vh; }
+      #status { position: fixed; top: 10px; right: 10px; background: rgba(0,0,0,0.7);
+                padding: 8px 12px; border-radius: 4px; z-index: 999; font-size: 13px; }
+      #copyright { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
+                   background: rgba(0,0,0,0.7); padding: 6px 12px; border-radius: 4px;
+                   z-index: 999; font-size: 12px; white-space: nowrap; }
+      #copyright a { color: #FFD700; text-decoration: none; }
+      #copyright a:hover { text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+    <div id="status">Connecting...</div>
+    <div id="copyright">ADS-B data by <a href="https://danglorioso.com" target="_blank">Dan Glorioso</a> &copy; <span id="year"></span></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+      <script>                                                                                         
+        const map = L.map('map').setView([42.2, -70.9], 9);
+
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+          attribution: '&copy; OpenStreetMap &copy; CARTO'
+        }).addTo(map);
+
+        function makePlaneIcon(flight, heading) {
+          const rotation = (heading ?? 0) - 90;
+          const label = flight
+            ? `<span style="font-size:11px;color:#FFD700;background:rgba(0,0,0,0.6);padding:1px
+  4px;border-radius:3px;margin-left:4px;vertical-align:middle;font-family:monospace;">${flight}</span>`
+            : '';
+          return L.divIcon({
+            className: '',
+            html: `<div style="display:flex;align-items:center;white-space:nowrap;"><span
+  style="font-size:28px;color:#FFD700;text-shadow:0 0 4px
+  #000;display:inline-block;transform:rotate(${rotation}deg);">✈</span>${label}</div>`,
+            iconSize: null,
+            iconAnchor: [16, 16]
+          });
+        }
+
+        const markers = {};
+        const aircraftData = {}; // hex -> { ac, lastSeen }
+        const status = document.getElementById('status');
+
+        function updateAircraft(aircraft) {
+          const now = Date.now();
+
+          aircraft.forEach(ac => {
+            aircraftData[ac.hex] = { ac, lastSeen: now };
+          });
+
+          // Remove anything not seen from any Pi in 30 seconds
+          Object.keys(aircraftData).forEach(hex => {
+            if (now - aircraftData[hex].lastSeen > 30000) {
+              delete aircraftData[hex];
+              if (markers[hex]) {
+                map.removeLayer(markers[hex]);
+                delete markers[hex];
+              }
+            }
+          });
+
+          // Render all known aircraft
+          Object.entries(aircraftData).forEach(([hex, { ac }]) => {
+            const flight = ac.flight?.trim() || null;
+            const label = flight || hex;
+            const popup = `
+              <b>${label}</b><br>
+              Alt: ${ac.altitude?.toLocaleString() ?? '?'} ft<br>
+              Speed: ${ac.speed ?? '?'} kt<br>
+              Heading: ${ac.track ?? '?'}°<br>
+              Squawk: ${ac.squawk ?? '?'}<br>
+              RSSI: ${ac.rssi ?? '?'} dBFS
+            `;
+            if (markers[hex]) {
+              markers[hex].setLatLng([ac.lat, ac.lon]);
+              markers[hex].setIcon(makePlaneIcon(flight, ac.track));
+              markers[hex].getPopup()?.setContent(popup);
+            } else {
+              markers[hex] = L.marker([ac.lat, ac.lon], { icon: makePlaneIcon(flight, ac.track) })
+                .bindPopup(popup)
+                .addTo(map);
+            }
+          });
+
+          status.textContent = `${Object.keys(aircraftData).length} aircraft · ${new 
+  Date().toLocaleTimeString()}`;
+        }
+
+        function connect(url) {
+          const ws = new WebSocket(url);
+          ws.onmessage = e => {
+            const { aircraft } = JSON.parse(e.data);
+            updateAircraft(aircraft);
+          };
+          ws.onclose = () => {
+            status.textContent = 'Disconnected — reconnecting...';
+            setTimeout(() => connect(url), 3000);
+          };
+          ws.onerror = () => ws.close();
+        }
+
+        // Add more lines here for each additional Pi
+        connect('wss://kaye1.danglorioso.com');
+        // connect('wss://adsb2.danglorioso.com');
+
+        document.getElementById('year').textContent = new Date().getFullYear();
+      </script>
+  </body>
+  </html>
