@@ -84,14 +84,45 @@
           }
 
           const markers = {};
-          const aircraftData = {}; // hex -> { ac, lastSeen }
+          const aircraftData = {}; // hex -> { ac, lastSeen, posTimestamp }
           const status = document.getElementById('status');
 
           function updateAircraft(aircraft) {
             const now = Date.now();
 
             aircraft.forEach(ac => {
-              aircraftData[ac.hex] = { ac, lastSeen: now };
+              const existing = aircraftData[ac.hex];
+              // Absolute ms timestamp of when this source last decoded a position.
+              // seen_pos = seconds since last position message (0 = just now).
+              const newPosTimestamp = (ac.seen_pos != null) ? now - ac.seen_pos * 1000 : null;
+
+              if (!existing) {
+                aircraftData[ac.hex] = { ac, lastSeen: now, posTimestamp: newPosTimestamp };
+              } else {
+                // Always bump lastSeen so the timeout doesn't drop an active aircraft
+                aircraftData[ac.hex].lastSeen = now;
+
+                const isFresherPos = newPosTimestamp != null &&
+                  (existing.posTimestamp == null || newPosTimestamp > existing.posTimestamp);
+
+                if (isFresherPos) {
+                  // This source has a more recent position fix — use its data fully
+                  aircraftData[ac.hex].ac = ac;
+                  aircraftData[ac.hex].posTimestamp = newPosTimestamp;
+                } else {
+                  // This source has a stale position — keep existing position but
+                  // merge in non-positional fields (callsign, squawk) in case they
+                  // are only available from this source
+                  aircraftData[ac.hex].ac = {
+                    ...existing.ac,
+                    flight: ac.flight?.trim() || existing.ac.flight,
+                    squawk: ac.squawk || existing.ac.squawk,
+                    rssi: (ac.rssi != null && existing.ac.rssi != null)
+                      ? Math.max(ac.rssi, existing.ac.rssi)
+                      : (ac.rssi ?? existing.ac.rssi),
+                  };
+                }
+              }
             });
 
             // Remove anything not seen from any Pi in 30 seconds
