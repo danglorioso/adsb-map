@@ -18,6 +18,8 @@
                     z-index: 999; font-size: 14px; white-space: nowrap; }
         #copyright a { color: #FFD700; text-decoration: none; }
         #copyright a:hover { text-decoration: underline; }
+        #legend { position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.7);
+                  padding: 8px 12px; border-radius: 4px; z-index: 999; font-size: 13px; line-height: 1.8; }
         @media (max-width: 640px) {
           #status { font-size: 18px; }
           #copyright { font-size: 17px; }
@@ -26,6 +28,11 @@
     </head>
     <body>
       <div id="map"></div>
+      <div id="legend">
+        <div><span style="color:#FFD700">✈︎</span> kaye1</div>
+        <div><span style="color:#00BFFF">✈︎</span> kbos169</div>
+        <div><span style="color:#FF69B4">✈︎</span> both (jumping?)</div>
+      </div>
       <div id="status">Connecting...</div>
       <div id="copyright">ADS-B data by <a href="https://danglorioso.com" target="_blank">Dan Glorioso</a> &copy; <span id="year"></span></div>
 
@@ -67,16 +74,27 @@
               .addTo(map);
           });
 
-          function makePlaneIcon(flight, heading) {
+          // DEBUG: source colors — remove once jumping is diagnosed
+          const SOURCE_COLORS = {
+            'kaye1':   '#FFD700', // yellow
+            'kbos169': '#00BFFF', // cyan
+            'both':    '#FF69B4', // pink — seen by both antennas
+          };
+
+          function getSourceKey(url) {
+            return url.replace('wss://', '').split('.')[0];
+          }
+
+          function makePlaneIcon(flight, heading, color = '#FFD700') {
             const rotation = (heading ?? 0) - 90;
             const label = flight
-              ? `<span style="font-size:13px;color:#FFD700;background:rgba(0,0,0,0.6);padding:1px
+              ? `<span style="font-size:13px;color:${color};background:rgba(0,0,0,0.6);padding:1px
     4px;border-radius:3px;margin-left:4px;vertical-align:middle;font-family:monospace;">${flight}</span>`
               : '';
             return L.divIcon({
               className: '',
               html: `<div style="display:flex;align-items:center;white-space:nowrap;"><span
-    style="font-size:28px;color:#FFD700;text-shadow:0 0 4px
+    style="font-size:28px;color:${color};text-shadow:0 0 4px
     #000;display:inline-block;transform:rotate(${rotation}deg);">✈︎</span>${label}</div>`,
               iconSize: null,
               iconAnchor: [16, 16]
@@ -84,10 +102,11 @@
           }
 
           const markers = {};
-          const aircraftData = {}; // hex -> { ac, lastSeen, posTimestamp }
+          // hex -> { ac, lastSeen, posTimestamp, posSource, sourceSeen: { key: ms } }
+          const aircraftData = {};
           const status = document.getElementById('status');
 
-          function updateAircraft(aircraft) {
+          function updateAircraft(aircraft, source) {
             const now = Date.now();
 
             aircraft.forEach(ac => {
@@ -97,22 +116,25 @@
               const newPosTimestamp = (ac.seen_pos != null) ? now - ac.seen_pos * 1000 : null;
 
               if (!existing) {
-                aircraftData[ac.hex] = { ac, lastSeen: now, posTimestamp: newPosTimestamp };
+                aircraftData[ac.hex] = {
+                  ac, lastSeen: now, posTimestamp: newPosTimestamp, posSource: source,
+                  sourceSeen: { [source]: now },
+                };
               } else {
-                // Always bump lastSeen so the timeout doesn't drop an active aircraft
                 aircraftData[ac.hex].lastSeen = now;
+                aircraftData[ac.hex].sourceSeen = {
+                  ...existing.sourceSeen,
+                  [source]: now,
+                };
 
                 const isFresherPos = newPosTimestamp != null &&
                   (existing.posTimestamp == null || newPosTimestamp > existing.posTimestamp);
 
                 if (isFresherPos) {
-                  // This source has a more recent position fix — use its data fully
                   aircraftData[ac.hex].ac = ac;
                   aircraftData[ac.hex].posTimestamp = newPosTimestamp;
+                  aircraftData[ac.hex].posSource = source;
                 } else {
-                  // This source has a stale position — keep existing position but
-                  // merge in non-positional fields (callsign, squawk) in case they
-                  // are only available from this source
                   aircraftData[ac.hex].ac = {
                     ...existing.ac,
                     flight: ac.flight?.trim() || existing.ac.flight,
@@ -137,9 +159,19 @@
             });
 
             // Render all known aircraft
-            Object.entries(aircraftData).forEach(([hex, { ac }]) => {
+            Object.entries(aircraftData).forEach(([hex, { ac, posSource, sourceSeen }]) => {
               const flight = ac.flight?.trim() || null;
               const label = flight || hex;
+
+              // Sources that have reported this aircraft in the last 15 seconds
+              const activeSources = Object.entries(sourceSeen ?? {})
+                .filter(([, t]) => now - t < 15000)
+                .map(([k]) => k);
+              const trackedByBoth = activeSources.length > 1;
+              const iconColor = trackedByBoth
+                ? SOURCE_COLORS['both']
+                : (SOURCE_COLORS[posSource] ?? '#FFD700');
+
               const popup = `
                 <b>${label}</b><br>
                 Alt: ${ac.altitude?.toLocaleString() ?? '?'} ft<br>
@@ -147,14 +179,16 @@
                 Heading: ${ac.track ?? '?'}°<br>
                 V/S: ${ac.vert_rate ?? '?'} ft/min<br>
                 Squawk: ${ac.squawk ?? '?'}<br>
-                RSSI: ${ac.rssi ?? '?'} dBFS
+                RSSI: ${ac.rssi ?? '?'} dBFS<br>
+                <i>Position from: ${posSource ?? '?'}</i><br>
+                <i>Seen by: ${activeSources.join(', ') || '?'}</i>
               `;
               if (markers[hex]) {
                 markers[hex].setLatLng([ac.lat, ac.lon]);
-                markers[hex].setIcon(makePlaneIcon(flight, ac.track));
+                markers[hex].setIcon(makePlaneIcon(flight, ac.track, iconColor));
                 markers[hex].getPopup()?.setContent(popup);
               } else {
-                markers[hex] = L.marker([ac.lat, ac.lon], { icon: makePlaneIcon(flight, ac.track) })
+                markers[hex] = L.marker([ac.lat, ac.lon], { icon: makePlaneIcon(flight, ac.track, iconColor) })
                   .bindPopup(popup)
                   .addTo(map);
               }
@@ -165,10 +199,11 @@
           }
 
           function connect(url) {
+            const source = getSourceKey(url);
             const ws = new WebSocket(url);
             ws.onmessage = e => {
               const { aircraft } = JSON.parse(e.data);
-              updateAircraft(aircraft);
+              updateAircraft(aircraft, source);
             };
             ws.onclose = () => {
               status.textContent = 'Disconnected — reconnecting...';
