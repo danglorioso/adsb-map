@@ -40,7 +40,10 @@
         <script>                                                                                         
           const map = L.map('map').setView([42.2, -70.9], 9);
 
-          L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+          // Replaced at build time from the CARTO_KEY Vercel env var (see vercel.json)
+          const CARTO_KEY = '__CARTO_KEY__';
+
+          L.tileLayer(`https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png?key=${CARTO_KEY}`, {
             attribution: '&copy; OpenStreetMap &copy; CARTO'
           }).addTo(map);
 

@@ -1,0 +1,4 @@
+{
+  "buildCommand": "mkdir -p public && cp index.html favicon.ico public/ && sed -i \"s/__CARTO_KEY__/$CARTO_KEY/\" public/index.html",
+  "outputDirectory": "public"
+}
